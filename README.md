@@ -251,6 +251,3 @@ Inference replicates the training preprocessing pipeline exactly: RobustScaler f
 - yfinance data may be delayed up to 15 minutes during market hours.
 
 ---
-
-github.com/namitpatel3006  
-linkedin.com/in/namitpatel3006
