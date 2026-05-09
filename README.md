@@ -252,9 +252,5 @@ Inference replicates the training preprocessing pipeline exactly: RobustScaler f
 
 ---
 
-## Author
-
-Namit Patel  
-B.E. Computer Engineering, Sardar Patel Institute of Technology, Mumbai  
 github.com/namitpatel3006  
 linkedin.com/in/namitpatel3006
