@@ -1,4 +1,4 @@
-# FinanceBot — AI Financial Intelligence System
+# QuantSentinel — AI Financial Intelligence System
 
 A production-grade quantitative finance terminal built on a PyTorch Temporal Fusion Transformer for stock direction forecasting, an institutional risk analysis pipeline with regime detection and Monte Carlo simulation, and a LangChain-powered conversational agent for trade and portfolio evaluation.
 
