@@ -1,0 +1,16 @@
+torch==2.7.1
+pytorch-forecasting==1.4.0
+pytorch-lightning==2.5.5
+transformers==4.57.1
+langchain-groq==1.1.2
+langgraph==1.1.10
+streamlit==1.56.0
+yfinance==0.2.66
+pandas==2.3.2
+numpy==1.26.4
+scikit-learn==1.7.2
+ta==0.11.0
+vaderSentiment==3.3.2
+requests==2.32.5
+groq==0.37.1
+scipy==1.15.3
