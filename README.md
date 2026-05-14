@@ -6,7 +6,7 @@
 
 ## Demo
 
-[![QuantSentinel Demo](https://img.youtube.com/vi/oAjEuWgfQ4E/maxresdefault.jpg)](https://www.youtube.com/watch?v=oAjEuWgfQ4E)
+[![QuantSentinel Demo](s1 (2).png)](https://www.youtube.com/watch?v=oAjEuWgfQ4E)
 
 Click the image above to watch the full demo video.
 
