@@ -151,9 +151,4 @@ python -m streamlit run app.py
 
 ---
 
-## Authors
 
-**Namit Patel** — TFT model, risk pipeline, agent architecture, Streamlit UI
-**Dhruv** — Sentiment analysis engine (FinBERT + DeBERTa + VADER ensemble)
-
-Sardar Patel Institute of Technology, Mumbai — B.E. Computer Engineering, 2026
