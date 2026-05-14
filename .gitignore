@@ -1,0 +1,39 @@
+# Model checkpoints
+*.ckpt
+*.pt
+*.pth
+checkpoints/
+
+# Jupyter notebooks
+.ipynb_checkpoints/
+*.ipynb
+
+# Data files
+*.csv
+*.json
+
+# Logs and results
+lightning_logs/
+logs/
+logs_robust/
+results/
+results_robust/
+results_with_sentiment/
+
+# Cache
+__pycache__/
+core/__pycache__/
+core/.ipynb_checkpoints/
+
+# Sensitive
+API_KEYS.ipynb
+.env
+
+# Large folders
+granite_tsfm/
+transformer_daily_model/
+core_working_backup/
+
+# Images and misc
+*.png
+*.pdf
