@@ -3,16 +3,18 @@
 > Quantitative finance terminal built on a PyTorch Temporal Fusion Transformer, institutional risk pipeline, and FinBERT-powered sentiment analysis.
 
 ---
-
 ## Demo
 
-[![QuantSentinel Demo](s1 (2).png)](https://www.youtube.com/watch?v=oAjEuWgfQ4E)
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=oAjEuWgfQ4E">
+    <img src="s1%20(2).png" width="700">
+  </a>
+</p>
 
-Click the image above to watch the full demo video.
+<p align="center">
+  ▶ Click the image above to watch the full QuantSentinel demo
+</p>
 
-
-> To embed directly: upload the video to YouTube, then replace the badge link above with:
-> `[![Demo](https://img.youtube.com/vi/YOUR_VIDEO_ID/0.jpg)](https://www.youtube.com/watch?v=YOUR_VIDEO_ID)`
 
 ---
 
