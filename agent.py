@@ -23,8 +23,18 @@ def get_stock_price(ticker: str) -> str:
     try:
         stock = yf.Ticker(ticker)
         hist = stock.history(period="2d")
-        if hist.empty:
-            return f"ERROR: No data returned for {ticker.upper()}."
+        if hist.empty or hist['Close'].iloc[-1] == 0:
+            return (
+                f"## PRICE QUOTE — {ticker.upper()}\n\n"
+                f"Ticker **{ticker.upper()}** was not found on any major exchange. "
+                f"This may be because:\n"
+                f"- The ticker symbol is incorrect (e.g. Anthropic is a private company — it has no stock ticker)\n"
+                f"- The asset is delisted\n"
+                f"- yfinance does not cover this exchange\n\n"
+                f"Verify the ticker symbol and try again. "
+                f"For Indian stocks use the `.NS` suffix (e.g. `RELIANCE.NS`). "
+                f"For crypto use `-USD` suffix (e.g. `BTC-USD`)."
+            )
         current = hist['Close'].iloc[-1]
         prev = hist['Close'].iloc[-2] if len(hist) > 1 else current
         change = current - prev
@@ -116,20 +126,14 @@ def comprehensive_risk_analysis(
             df.columns = df.columns.get_level_values(0)
         price_series = df["Close"].dropna()
 
-        # 🔥 GET CURRENT PRICE FOR AUTO-FILL
-        current_price = float(price_series.iloc[-1])
-
-        # 🔥 AUTO-FILL MISSING INPUTS
-        c_entry = c_entry if c_entry else current_price
-        c_stop = c_stop if c_stop else (c_entry * 0.95) # Default 5% stop loss
-        c_take = c_take if c_take else (c_entry * 1.10) # Default 10% take profit
-
-        trade_input = {
-            "entry_price": c_entry,
-            "stop_loss": c_stop,
-            "take_profit": c_take,
-            "account_size": c_account,
-        }
+        trade_input = None
+        if c_entry and c_stop:
+            trade_input = {
+                "entry_price": c_entry,
+                "stop_loss": c_stop,
+                "take_profit": c_take if c_take else c_entry * 1.10,
+                "account_size": c_account,
+            }
 
         capital_input = {
             "initial_capital": c_account,
@@ -138,11 +142,12 @@ def comprehensive_risk_analysis(
         }
 
         ctx = risk_service.full_analysis(
-            ticker=ticker,
-            price_series=price_series,
-            trade_input=trade_input,
-            capital_input=capital_input,
-        )
+                ticker=ticker,
+                price_series=price_series,
+                trade_input=trade_input,
+                capital_input=capital_input,
+                 tft_result=None,   # TFT only used in forecast_trade_risk
+                )
         return ctx.explanation
 
     except Exception:
@@ -239,11 +244,155 @@ def analyze_full_portfolio(portfolio_query: str) -> str:
 # TOOL REGISTRY
 # ──────────────────────────────────────────────
 
+
+@tool
+def forecast_trade_risk(ticker: str, account_size: float = 100000.0) -> str:
+    """
+    Chains the TFT price prediction directly into the risk engine.
+    Use when the user asks for forecast risk, predicted trade risk, or
+    model-based trade setup without providing their own entry/stop/target.
+    The TFT model predicts tomorrow's price and direction, derives a complete
+    trade setup from those levels, then runs the full institutional risk report.
+    Only requires ticker and account size — everything else is model-derived.
+    """
+    print(f"\n[SYSTEM] Running forecast trade risk for {ticker}...")
+
+    def clean_account(val):
+        if val is None: return 100000.0
+        if isinstance(val, str):
+            return float(val.replace("$","").replace(",","").replace("k","000").strip())
+        return float(val) if float(val) > 0 else 100000.0
+
+    try:
+        c_account = clean_account(account_size)
+        ticker = ticker.upper()
+
+        # ── Step 1: TFT Prediction ────────────────────────────────────────
+        print(f"[SYSTEM] Running TFT inference for {ticker}...")
+        tft_result = tft_service.predict_direction(ticker)
+
+        if "error" in tft_result:
+            return f"## FORECAST TRADE RISK — {ticker}\n\nTFT model failed: {tft_result['error']}"
+
+        last_close      = tft_result["last_close_price"]
+        predicted_price = tft_result["predicted_price"]
+        direction       = tft_result["predicted_direction"]
+        inf_time        = tft_result["inference_time_ms"]
+
+        # ── Step 2: Derive trade levels from prediction ───────────────────
+        predicted_move  = abs(predicted_price - last_close)
+
+        # Stop = half the predicted move on the wrong side of entry
+        # Stop at half the predicted move = 2:1 R:R by construction
+        # reward = predicted_move, risk = predicted_move * 0.5 → R:R = 2.0
+        stop_distance = max(predicted_move * 0.5, last_close * 0.001)
+        
+        if direction == "UP":
+            entry      = round(last_close, 2)
+            target     = round(predicted_price, 2)
+            stop       = round(entry - stop_distance, 2)
+            trade_type = "LONG"
+        else:
+            entry      = round(last_close, 2)
+            target     = round(predicted_price, 2)
+            stop       = round(entry + stop_distance, 2)
+            trade_type = "SHORT"
+        
+        # Verify R:R — reward is predicted_move, risk is stop_distance
+        gross_rr = round(predicted_move / stop_distance, 2) 
+        # Cap position exposure to 95% of account to prevent overleveraging
+        # on tight model-predicted stops
+        max_exposure   = c_account * 0.95
+        max_shares_cap = int(max_exposure / entry)
+        risk_amount    = c_account * 0.01                    # 1% account risk
+        raw_shares     = int(risk_amount / stop_distance) if stop_distance > 0 else 0
+        capped_shares  = min(raw_shares, max_shares_cap)
+        
+        # Override account risk percent so TradeRiskEngine produces capped shares
+        # by back-calculating what risk percent gives the capped position
+        if raw_shares > 0:
+            capped_risk_pct = (capped_shares * stop_distance) / c_account
+        else:
+            capped_risk_pct = 0.01
+# always ~2.0 by construction
+
+        # ── Step 3: Fetch price data and run full risk pipeline ───────────
+        import pandas as pd
+        import yfinance as yf
+
+        df = yf.download(ticker, period="1y", interval="1d", progress=False)
+        if df.empty:
+            return f"ERROR: No historical data for {ticker}."
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        price_series = df["Close"].dropna()
+
+        trade_input = {
+            "entry_price":  entry,
+            "stop_loss":    stop,
+            "take_profit":  target,
+            "account_size": c_account,
+        }
+        capital_input = {
+            "initial_capital": c_account,
+            "n_trades": 50,
+            "simulations": 300,
+        }
+
+        ctx = risk_service.full_analysis(
+            ticker=ticker,
+            price_series=price_series,
+            trade_input=trade_input,
+            capital_input=capital_input,
+            tft_result=tft_result,
+        )
+
+        # Inject trade params into ctx.trade if engine didn't echo them
+        if ctx.trade and "error" not in ctx.trade:
+            ctx.trade.setdefault("entry_price",  entry)
+            ctx.trade.setdefault("stop_loss",    stop)
+            ctx.trade.setdefault("take_profit",  target)
+            ctx.trade.setdefault("account_size", c_account)
+
+        # ── Step 4: Build the model-derived preamble ─────────────────────
+        preamble = (
+            f"## FORECAST TRADE RISK — {ticker}\n\n"
+            f"### MODEL-DERIVED TRADE SETUP\n\n"
+            f"| Parameter | Value | Source |\n"
+            f"| :--- | :--- | :--- |\n"
+            f"| Trade Type | {trade_type} | TFT predicted direction |\n"
+            f"| Last Close | USD {last_close:,.2f} | Live market data |\n"
+            f"| TFT Predicted Price | USD {predicted_price:,.2f} | PyTorch TFT model |\n"
+            f"| Predicted Move | USD {predicted_move:,.2f} ({(predicted_move/last_close)*100:.2f}%) | abs(predicted - close) |\n"
+            f"| Entry | USD {entry:,.2f} | Last close price |\n"
+            f"| Stop Loss | USD {stop:,.2f} | 50% of predicted move, opposite side |\n"
+            f"| Take Profit | USD {target:,.2f} | TFT predicted price |\n"
+            f"| Theoretical R:R | {gross_rr:.2f} | Predicted move / stop distance |\n"
+            f"| Inference Time | {inf_time} ms | TFT model |\n\n"
+            f"**How the trade levels were derived:** The TFT model predicted a price of "
+            f"USD {predicted_price:,.2f} from a last close of USD {last_close:,.2f}, implying a "
+            f"USD {predicted_move:,.2f} move {direction.lower()}ward. "
+            f"Entry is set at the current closing price. "
+            f"Take profit is the model's predicted price. "
+            f"Stop loss is placed at 50% of the predicted move on the opposite side of entry, "
+            f"ensuring a minimum 2:1 risk/reward by construction. "
+            f"All downstream risk calculations use these model-derived levels.\n\n"
+            f"---\n\n"
+        )
+
+        return preamble + ctx.explanation
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return f"Forecast trade risk failed for {ticker}: {str(e)}"
+
 ALL_TOOLS = [
     get_stock_price,
     predict_stock_direction,
     comprehensive_risk_analysis,
     analyze_full_portfolio,
+    forecast_trade_risk,
 ]
 
 TOOL_MAP = {t.name: t for t in ALL_TOOLS}
@@ -254,93 +403,120 @@ PASSTHROUGH_TOOLS = {
     "analyze_full_portfolio",
     "get_stock_price",
     "predict_stock_direction",
+    "forecast_trade_risk",
 }
 
 # ──────────────────────────────────────────────
 # LLM
 # ──────────────────────────────────────────────
 
-os.environ["GROQ_API_KEY"] = os.getenv("")
+os.environ["GROQ_API_KEY"] = "Paste your API KEY"
 
 llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0)
 llm_with_tools = llm.bind_tools(ALL_TOOLS)
 
-# Greetings and off-topic messages — handle without touching a tool
 GREETING_TOKENS = {
     "hi", "hello", "hey", "yo", "sup", "howdy", "greetings",
     "good morning", "good afternoon", "good evening",
     "what can you do", "help", "what are you", "who are you",
 }
 
-# SYSTEM_PROMPT = """You are FinanceBot — a quantitative risk terminal.
+THEORETICAL_PHRASES = [
+    "what is risk", "what is cvar", "what is volatility", "what does volatility",
+    "what is sharpe", "what is drawdown", "what is regime", "what is monte carlo",
+    "what is stop loss", "what is take profit", "what is risk reward",
+    "what do you mean", "what do u mean", "explain", "define ",
+    "how does", "how do", "what does", "what are these",
+    "what is a ", "what is an ", "what is the ", "market regime",
+    "overall risk", "overall market", "tell me about",
+]
 
-# Available tools:
-# - get_stock_price       → live price quote for a ticker
-# - predict_stock_direction → TFT model: tomorrow's price and direction
-# - comprehensive_risk_analysis → full trade risk report (needs entry, stop, account size)
-# - analyze_full_portfolio → portfolio volatility + diversification (needs ticker:amount pairs)
-
-# RULES:
-# 1. Call exactly ONE tool per request.
-# 2. Never call a tool for greetings, meta-questions, or anything that does not name a specific ticker.
-# 3. The tool already formats its output. Output the tool result VERBATIM — zero modifications.
-# 4. Never fabricate numbers. If a tool fails, report the error exactly as returned."""
-SYSTEM_PROMPT = """You are FinanceBot — a quantitative risk terminal and financial educator.
+SYSTEM_PROMPT = """You are FinanceBot — a quantitative risk terminal.
 
 Available tools:
-- get_stock_price       → live price quote for a ticker
-- predict_stock_direction → TFT model: tomorrow's price and direction
-- comprehensive_risk_analysis → full trade risk report (needs entry, stop, account size)
-- analyze_full_portfolio → portfolio volatility + diversification (needs ticker:amount pairs)
+- get_stock_price           → live price quote for a specific ticker
+- predict_stock_direction   → TFT forecast for a specific ticker (direction + price only)
+- comprehensive_risk_analysis → full trade risk report. ONLY call when user explicitly provides a numeric entry price AND numeric stop loss. If missing, ask.
+- analyze_full_portfolio    → portfolio report. ONLY call when user gives explicit ticker:amount pairs.
+- forecast_trade_risk       → chains TFT prediction into a full risk report. Use when user asks for "forecast risk", "predicted trade risk", "what does the model say I should trade", or any risk query WITHOUT providing their own entry/stop. Requires only ticker and account size.
 
-RULES:
-1. Call exactly ONE tool if the user provides a ticker or portfolio.
-2. If the user asks a theoretical or educational question about finance (e.g., "what is risk", "how does monte carlo work"), answer it directly and professionally using your internal knowledge. Do NOT call a tool. Use markdown formatting to make your explanation readable.
-3. When using a tool, the tool already formats its output. Output the tool result VERBATIM — zero modifications.
-4. Never fabricate numbers. If a tool fails, report the error exactly as returned."""
+CRITICAL RULES:
+1. Call exactly ONE tool per request.
+2. For general/conceptual questions — answer in plain text. DO NOT call any tool.
+3. For comprehensive_risk_analysis — ONLY call if the user gave explicit numeric entry AND stop loss. Otherwise use forecast_trade_risk.
+4. Return tool results VERBATIM. Never modify or add to them."""
 
 
 # ──────────────────────────────────────────────
 # SINGLE-SHOT AGENT — structurally cannot loop
 # ──────────────────────────────────────────────
 
-def _is_greeting(text: str) -> bool:
-    """Return True only if the message is a direct greeting."""
-    normalized = text.lower().strip().rstrip("!?.,")
-    # Only block exact matches to our greeting list
-    if normalized in GREETING_TOKENS:
-        return True
-    return False
+def _classify(text: str) -> str:
+    lower = text.lower().strip().rstrip("!?.,")
+    words = lower.split()
+
+    if lower in GREETING_TOKENS:
+        return "greeting"
+    if len(words) <= 2 and not any(c.isupper() for c in text):
+        return "greeting"
+
+    for phrase in THEORETICAL_PHRASES:
+        if phrase in lower:
+            return "theoretical"
+
+    return "actionable"
 
 
 GREETING_RESPONSE = (
-    "**FinanceBot — Quantitative Risk Engine**\n\n"
-    "Connected to: PyTorch TFT model · institutional risk pipeline · live market data.\n\n"
-    "| Capability | Example query |\n"
+    "**Ready.** Ask me about any stock.\n\n"
+    "| I can | Example |\n"
     "| :--- | :--- |\n"
-    "| Live price | `What is NVDA's price?` |\n"
-    "| Forecast | `Predict tomorrow's direction for AAPL` |\n"
-    "| Trade risk | `Risk: TSLA, $50k account, entry $170, stop $160, target $195` |\n"
-    "| Portfolio | `Portfolio: NVDA:15000, MSFT:10000, GLD:5000` |\n\n"
-    "Provide a ticker and query to begin."
+    "| Get a price | `What is NVDA's price?` |\n"
+    "| Forecast direction | `Predict tomorrow's direction for AAPL` |\n"
+    "| Analyze a trade | `Risk: TSLA, 50k account, entry 170, stop 160, target 195` |\n"
+    "| Analyze a portfolio | `Portfolio: NVDA:15000, MSFT:10000, GLD:5000` |\n\n"
+    "Use the sidebar for quick examples."
 )
 
 
 def run_agent(user_message: str) -> str:
     """
     Three-step pipeline. Structurally cannot loop.
-
-    Step 1 — Greeting check (no LLM call needed).
-    Step 2 — Ask LLM which tool to call.
-    Step 3 — Execute that ONE tool and return the result directly (no LLM reformatting).
+    Step 1 — Classify intent: greeting / theoretical / actionable.
+    Step 2 — Ask LLM which tool to call (actionable only).
+    Step 3 — Execute that ONE tool and return result directly.
     """
 
-    # ── STEP 1: Greeting guard ────────────────
-    if _is_greeting(user_message):
-        print("[AGENT] Greeting detected — skipping tool call.")
+    intent = _classify(user_message)
+    print(f"[AGENT] Intent classified as: {intent}")
+
+    # ── STEP 1a: Greeting ─────────────────────
+    if intent == "greeting":
         return GREETING_RESPONSE
 
-    # ── STEP 2: Tool selection ────────────────
+    # ── STEP 1b: Theoretical — answer via plain LLM, no tools ──
+    if intent == "theoretical":
+        print("[AGENT] Theoretical question — answering without tool.")
+        plain_llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0)
+        resp = plain_llm.invoke([
+            SystemMessage(content=(
+        "You are FinanceBot, a quantitative finance assistant built on a "
+        "PyTorch Temporal Fusion Transformer (TFT) for stock direction forecasting, "
+        "an institutional risk engine with regime detection and Monte Carlo simulation, "
+        "and a FinBERT-based sentiment analysis pipeline. "
+        "When asked about the TFT model, explain it as a deep learning architecture "
+        "that uses multi-head attention, gating mechanisms, variable selection networks, "
+        "and quantile regression to produce probabilistic time series forecasts. "
+        "Answer conceptual finance and ML questions in clear, structured detail. "
+        "Use headings and bullet points for complex topics. "
+        "Give real definitions, explain the math where relevant, and use practical examples. "
+        "Do not truncate answers. No emojis."
+            )),
+            HumanMessage(content=user_message),
+        ])
+        return resp.content
+
+    # ── STEP 2: Tool selection (actionable queries only) ──
     messages = [
         SystemMessage(content=SYSTEM_PROMPT),
         HumanMessage(content=user_message),
@@ -349,7 +525,7 @@ def run_agent(user_message: str) -> str:
     print("\n[AGENT] Step 2 — requesting tool selection from LLM...")
     ai_msg = llm_with_tools.invoke(messages)
 
-    # LLM answered without a tool (clarification, error, etc.)
+    # LLM chose to answer directly (e.g. asked for missing params)
     if not ai_msg.tool_calls:
         print("[AGENT] No tool call — returning LLM direct answer.")
         return ai_msg.content
@@ -366,7 +542,6 @@ def run_agent(user_message: str) -> str:
 
     try:
         raw = TOOL_MAP[name].invoke(args)
-        # All tools now return pre-formatted strings — pass through directly
         return str(raw)
     except Exception as e:
         traceback.print_exc()
