@@ -7,7 +7,7 @@
 ## Demo
 
 <!-- Replace the URL below with your actual video link after uploading to YouTube/Google Drive -->
-[![QuantSentinel Demo](https://img.shields.io/badge/Watch%20Demo-Video-red?style=for-the-badge&logo=youtube)](YOUR_VIDEO_URL_HERE)
+[![QuantSentinel Demo]([https://img.shields.io/badge/Watch%20Demo-Video-red?style=for-the-badge&logo=youtube](https://youtu.be/oAjEuWgfQ4E))](YOUR_VIDEO_URL_HERE)
 
 > To embed directly: upload the video to YouTube, then replace the badge link above with:
 > `[![Demo](https://img.youtube.com/vi/YOUR_VIDEO_ID/0.jpg)](https://www.youtube.com/watch?v=YOUR_VIDEO_ID)`
