@@ -12,7 +12,19 @@ from core.tft_service import TFTService
 
 risk_service = RiskService()
 tft_service = TFTService(model_path="tft_Fold 3-v1.ckpt")
+# ──────────────────────────────────────────────
+# RAG SERVICE INITIALIZATION
+# ──────────────────────────────────────────────
 
+try:
+    from core.rag_service import RAGService
+    rag_service = RAGService.get_instance()
+    RAG_AVAILABLE = True
+    print("[AGENT] RAG service loaded — financial document search enabled.")
+except Exception as _rag_err:
+    rag_service = None
+    RAG_AVAILABLE = False
+    print(f"[AGENT] RAG service unavailable: {_rag_err}")
 # ──────────────────────────────────────────────
 # TOOLS
 # ──────────────────────────────────────────────
@@ -23,18 +35,8 @@ def get_stock_price(ticker: str) -> str:
     try:
         stock = yf.Ticker(ticker)
         hist = stock.history(period="2d")
-        if hist.empty or hist['Close'].iloc[-1] == 0:
-            return (
-                f"## PRICE QUOTE — {ticker.upper()}\n\n"
-                f"Ticker **{ticker.upper()}** was not found on any major exchange. "
-                f"This may be because:\n"
-                f"- The ticker symbol is incorrect (e.g. Anthropic is a private company — it has no stock ticker)\n"
-                f"- The asset is delisted\n"
-                f"- yfinance does not cover this exchange\n\n"
-                f"Verify the ticker symbol and try again. "
-                f"For Indian stocks use the `.NS` suffix (e.g. `RELIANCE.NS`). "
-                f"For crypto use `-USD` suffix (e.g. `BTC-USD`)."
-            )
+        if hist.empty:
+            return f"ERROR: No data returned for {ticker.upper()}."
         current = hist['Close'].iloc[-1]
         prev = hist['Close'].iloc[-2] if len(hist) > 1 else current
         change = current - prev
@@ -141,13 +143,20 @@ def comprehensive_risk_analysis(
             "simulations": 300,
         }
 
+        # Run TFT prediction to feed into forecast risk + sentiment alignment
+        print(f"[SYSTEM] Running TFT inference for sentiment+forecast alignment...")
+        tft_result = tft_service.predict_direction(ticker)
+        if "error" in tft_result:
+            print(f"[SYSTEM] TFT unavailable for risk report: {tft_result['error']}")
+            tft_result = None
+
         ctx = risk_service.full_analysis(
-                ticker=ticker,
-                price_series=price_series,
-                trade_input=trade_input,
-                capital_input=capital_input,
-                 tft_result=None,   # TFT only used in forecast_trade_risk
-                )
+            ticker=ticker,
+            price_series=price_series,
+            trade_input=trade_input,
+            capital_input=capital_input,
+            tft_result=tft_result,
+        )
         return ctx.explanation
 
     except Exception:
@@ -283,38 +292,21 @@ def forecast_trade_risk(ticker: str, account_size: float = 100000.0) -> str:
         predicted_move  = abs(predicted_price - last_close)
 
         # Stop = half the predicted move on the wrong side of entry
-        # Stop at half the predicted move = 2:1 R:R by construction
-        # reward = predicted_move, risk = predicted_move * 0.5 → R:R = 2.0
-        stop_distance = max(predicted_move * 0.5, last_close * 0.001)
-        
+        # This gives a minimum 2:1 R:R by construction
+        stop_distance   = max(predicted_move * 0.5, last_close * 0.01)  # floor at 1%
+
         if direction == "UP":
-            entry      = round(last_close, 2)
-            target     = round(predicted_price, 2)
-            stop       = round(entry - stop_distance, 2)
+            entry  = round(last_close, 2)
+            target = round(predicted_price, 2)
+            stop   = round(entry - stop_distance, 2)
             trade_type = "LONG"
         else:
-            entry      = round(last_close, 2)
-            target     = round(predicted_price, 2)
-            stop       = round(entry + stop_distance, 2)
+            entry  = round(last_close, 2)
+            target = round(predicted_price, 2)
+            stop   = round(entry + stop_distance, 2)
             trade_type = "SHORT"
-        
-        # Verify R:R — reward is predicted_move, risk is stop_distance
-        gross_rr = round(predicted_move / stop_distance, 2) 
-        # Cap position exposure to 95% of account to prevent overleveraging
-        # on tight model-predicted stops
-        max_exposure   = c_account * 0.95
-        max_shares_cap = int(max_exposure / entry)
-        risk_amount    = c_account * 0.01                    # 1% account risk
-        raw_shares     = int(risk_amount / stop_distance) if stop_distance > 0 else 0
-        capped_shares  = min(raw_shares, max_shares_cap)
-        
-        # Override account risk percent so TradeRiskEngine produces capped shares
-        # by back-calculating what risk percent gives the capped position
-        if raw_shares > 0:
-            capped_risk_pct = (capped_shares * stop_distance) / c_account
-        else:
-            capped_risk_pct = 0.01
-# always ~2.0 by construction
+
+        gross_rr = predicted_move / stop_distance  # always ~2.0 by construction
 
         # ── Step 3: Fetch price data and run full risk pipeline ───────────
         import pandas as pd
@@ -387,12 +379,39 @@ def forecast_trade_risk(ticker: str, account_size: float = 100000.0) -> str:
         traceback.print_exc()
         return f"Forecast trade risk failed for {ticker}: {str(e)}"
 
+
+@tool
+def search_financial_documents(query: str, ticker: str = None) -> str:
+    """
+    Search the financial document knowledge base (SEC 10-K, 10-Q, 8-K filings).
+    Use when the user asks about company financials, earnings, revenue, guidance,
+    business segments, risk factors, or any question requiring document-level detail.
+    Optionally filter by ticker to search a specific company only.
+    Examples:
+      "What did Apple say about iPhone revenue in their annual report?"
+      "TSLA risk factors"
+      "MSFT cloud segment growth"
+    """
+    if not RAG_AVAILABLE:
+        return (
+            "The financial document knowledge base is not yet built. "
+            "Run `python build_index.py` to index SEC filings and enable this feature."
+        )
+    try:
+        clean_ticker = ticker.strip().upper() if ticker else None
+        return rag_service.search(query, ticker=clean_ticker)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return f"Document search failed: {str(e)}"
+
 ALL_TOOLS = [
     get_stock_price,
     predict_stock_direction,
     comprehensive_risk_analysis,
     analyze_full_portfolio,
     forecast_trade_risk,
+    search_financial_documents,
 ]
 
 TOOL_MAP = {t.name: t for t in ALL_TOOLS}
@@ -404,13 +423,14 @@ PASSTHROUGH_TOOLS = {
     "get_stock_price",
     "predict_stock_direction",
     "forecast_trade_risk",
+    "search_financial_documents",
 }
 
 # ──────────────────────────────────────────────
 # LLM
 # ──────────────────────────────────────────────
 
-os.environ["GROQ_API_KEY"] = "Paste your API KEY"
+os.environ["GROQ_API_KEY"] = "PASTE API KEY HERE"
 
 llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0)
 llm_with_tools = llm.bind_tools(ALL_TOOLS)
@@ -439,6 +459,7 @@ Available tools:
 - comprehensive_risk_analysis → full trade risk report. ONLY call when user explicitly provides a numeric entry price AND numeric stop loss. If missing, ask.
 - analyze_full_portfolio    → portfolio report. ONLY call when user gives explicit ticker:amount pairs.
 - forecast_trade_risk       → chains TFT prediction into a full risk report. Use when user asks for "forecast risk", "predicted trade risk", "what does the model say I should trade", or any risk query WITHOUT providing their own entry/stop. Requires only ticker and account size.
+- search_financial_documents → searches indexed SEC filings (10-K, 10-Q, 8-K) for document-level answers. Use for questions about earnings, revenue, guidance, risk factors, business segments, or any company-specific financial detail.
 
 CRITICAL RULES:
 1. Call exactly ONE tool per request.
@@ -500,17 +521,10 @@ def run_agent(user_message: str) -> str:
         plain_llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0)
         resp = plain_llm.invoke([
             SystemMessage(content=(
-        "You are FinanceBot, a quantitative finance assistant built on a "
-        "PyTorch Temporal Fusion Transformer (TFT) for stock direction forecasting, "
-        "an institutional risk engine with regime detection and Monte Carlo simulation, "
-        "and a FinBERT-based sentiment analysis pipeline. "
-        "When asked about the TFT model, explain it as a deep learning architecture "
-        "that uses multi-head attention, gating mechanisms, variable selection networks, "
-        "and quantile regression to produce probabilistic time series forecasts. "
-        "Answer conceptual finance and ML questions in clear, structured detail. "
-        "Use headings and bullet points for complex topics. "
-        "Give real definitions, explain the math where relevant, and use practical examples. "
-        "Do not truncate answers. No emojis."
+                "You are FinanceBot, a quantitative finance assistant. "
+                "Answer the user's conceptual finance question clearly and concisely. "
+                "Use plain language. Give a definition, then one practical example. "
+                "Keep the response mainly long. No emojis."
             )),
             HumanMessage(content=user_message),
         ])
