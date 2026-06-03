@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # core/document_fetcher.py
 #
 # Fetches SEC EDGAR filings (10-K, 10-Q, 8-K) for the 30 training tickers.
@@ -6,6 +7,8 @@
 #
 # Called once by build_index.py to build the FAISS index.
 
+=======
+>>>>>>> c831733 (feat: RAG query rewriting, chunk reranking, ticker validation, intent fix)
 import os
 import re
 import json

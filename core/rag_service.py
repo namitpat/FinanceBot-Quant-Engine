@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # core/rag_service.py
 #
 # Loads the FAISS index built by build_index.py and answers financial
@@ -5,6 +6,8 @@
 #
 # Called at query time by the search_financial_documents tool in agent.py.
 
+=======
+>>>>>>> c831733 (feat: RAG query rewriting, chunk reranking, ticker validation, intent fix)
 import os
 import json
 import numpy as np
@@ -63,7 +66,15 @@ class RAGService:
         with open(CHUNKS_PATH, "r", encoding="utf-8") as f:
             self.chunks = json.load(f)
 
+<<<<<<< HEAD
         self.llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0)
+=======
+        self.llm = ChatGroq(
+            model="llama-3.3-70b-versatile",
+            temperature=0,
+            api_key=os.environ.get("PASTE API KEY HERE")
+                )
+>>>>>>> c831733 (feat: RAG query rewriting, chunk reranking, ticker validation, intent fix)
 
         print(f"[RAG] Ready. Index has {self.index.ntotal} vectors, "
               f"{len(self.chunks)} chunks.")
