@@ -105,12 +105,14 @@ class RAGService:
                 "form_type": chunk.get("form_type", ""),
                 "source":    chunk.get("source", ""),
                 "score":     float(1 / (1 + dist)),  # convert L2 distance to similarity
-                "rank":      len(results) + 1,
             })
 
             if len(results) >= top_k:
                 break
 
+        results.sort(key=lambda x: x.get("score", 0), reverse=True)
+        for i, c in enumerate(results):
+            c["rank"] = i + 1
         return results
 
     # ── Query rewriting ───────────────────────
