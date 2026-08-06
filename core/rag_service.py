@@ -1,10 +1,3 @@
-# core/rag_service.py
-#
-# Loads the FAISS index built by build_index.py and answers financial
-# document queries using semantic retrieval + LLM synthesis.
-#
-# Called at query time by the search_financial_documents tool in agent.py.
-
 import os
 import json
 import numpy as np
@@ -63,7 +56,11 @@ class RAGService:
         with open(CHUNKS_PATH, "r", encoding="utf-8") as f:
             self.chunks = json.load(f)
 
-        self.llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0)
+        self.llm = ChatGroq(
+            model="llama-3.3-70b-versatile",
+            temperature=0,
+            api_key=os.environ.get("GROQ_API_KEY")
+                )
 
         print(f"[RAG] Ready. Index has {self.index.ntotal} vectors, "
               f"{len(self.chunks)} chunks.")
@@ -113,7 +110,65 @@ class RAGService:
             if len(results) >= top_k:
                 break
 
+        results.sort(key=lambda x: x.get("score", 0), reverse=True)
+        for i, c in enumerate(results):
+            c["rank"] = i + 1
         return results
+
+    # ── Query rewriting ───────────────────────
+    def _rewrite_query(self, query: str) -> str:
+        """
+        Rewrite the user query into a form that retrieves better chunks.
+        Expands financial shorthand and adds context for SEC filing search.
+        """
+        rewrites = {
+            "eps":      "earnings per share EPS",
+            "rev":      "revenue net sales",
+            "yoy":      "year over year growth",
+            "qoq":      "quarter over quarter",
+            "fcf":      "free cash flow",
+            "ebitda":   "EBITDA operating income",
+            "guidance": "forward guidance outlook forecast",
+            "buyback":  "share repurchase buyback program",
+            "capex":    "capital expenditure investment",
+            "gm":       "gross margin gross profit",
+        }
+        lower = query.lower()
+        for shorthand, expanded in rewrites.items():
+            if shorthand in lower.split():
+                query = query + " " + expanded
+
+        # Append "SEC filing" context if no filing-specific keyword is present.
+        # This nudges the embedding closer to SEC document chunks vs generic finance text.
+        filing_keywords = ["10-k", "10-q", "8-k", "filing", "report",
+                           "annual", "quarterly", "earnings"]
+        if not any(kw in lower for kw in filing_keywords):
+            query = query + " SEC filing"
+
+        return query
+
+    # ── Chunk reranking ───────────────────────
+    def _rerank_chunks(self, chunks: list, min_score: float = 0.15) -> list:
+        """
+        Filter and rerank retrieved chunks by similarity score.
+        Removes low-quality matches below the minimum score threshold.
+        Sorts by score descending so the most relevant chunks come first.
+
+        If all chunks fall below the threshold, the top 3 by score are
+        returned rather than an empty list — avoids silent failures where
+        the LLM receives no context and hallucinates an answer.
+        """
+        if not chunks:
+            return chunks
+
+        scored = [c for c in chunks if c.get("score", 0) >= min_score]
+
+        if not scored:
+            # All chunks below threshold — return top 3 instead of empty
+            scored = sorted(chunks, key=lambda x: x.get("score", 0), reverse=True)[:3]
+
+        scored.sort(key=lambda x: x.get("score", 0), reverse=True)
+        return scored
 
     # ── LLM synthesis ─────────────────────────
     def _synthesize(self, query: str, chunks: list, ticker: str = None) -> str:
@@ -147,7 +202,7 @@ class RAGService:
             "If the answer is truly not present, say so explicitly. "
             "Always cite which source (Source 1, Source 2, etc.) your answer comes from. "
             "No emojis. No financial advice disclaimers in your answer body."
-                    )
+        )
 
         user_msg = (
             f"Document excerpts:\n\n{context}\n\n"
@@ -169,8 +224,13 @@ class RAGService:
         """
         print(f"[RAG] Query: '{query}' | Ticker filter: {ticker or 'none'}")
 
-        chunks = self._retrieve(query, ticker=ticker)
-        print(f"[RAG] Retrieved {len(chunks)} chunks")
+        rewritten_query = self._rewrite_query(query)
+        if rewritten_query != query:
+            print(f"[RAG] Query rewritten: '{query}' -> '{rewritten_query}'")
+
+        chunks = self._retrieve(rewritten_query, ticker=ticker)
+        chunks = self._rerank_chunks(chunks)
+        print(f"[RAG] Retrieved {len(chunks)} chunks after reranking")
 
         answer = self._synthesize(query, chunks, ticker=ticker)
 
