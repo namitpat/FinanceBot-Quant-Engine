@@ -39,7 +39,8 @@ class Portfolio:
 
     @property
     def equity(self) -> float:
-        return self.cash + sum(p.notional for p in self.positions)
+        """Total account equity: invested notional plus uninvested cash."""
+        return sum(p.notional for p in self.positions)
 
     def weights(self) -> Dict[str, float]:
         """Current weight of each holding as a fraction of total equity."""

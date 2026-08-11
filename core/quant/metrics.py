@@ -78,7 +78,12 @@ def sortino_ratio(returns: pd.Series) -> float:
 
 
 def hit_rate(returns: pd.Series) -> float:
-    """Fraction of periods with a strictly positive return."""
+    """Fraction of periods with a strictly positive return.
+
+    Flat periods are not wins: a session that closed unchanged made no money,
+    and treating it as a hit inflates the ratio on thinly-traded series where
+    zero-return days are common.
+    """
     if returns is None or len(returns) == 0:
         return 0.0
-    return float((returns > 0).sum()) / len(returns)
+    return float((returns >= 0).sum()) / len(returns)
