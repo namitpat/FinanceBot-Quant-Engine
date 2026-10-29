@@ -1,0 +1,8 @@
+<form [formGroup]="form" id="order-form">
+  <input formControlName="symbol" name="symbol">
+  <input type="number" formControlName="quantity" name="quantity">
+  <button id="buy-btn" type="submit">Buy</button>
+  <button id="buy-btn" type="button" (click)="form.reset()">Reset</button>
+</form>
+<a href="{{ reportUrl }}" target="_blank">Open report</a>
+<p class="total">{{ total(12500) }}</p>
