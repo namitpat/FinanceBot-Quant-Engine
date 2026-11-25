@@ -6,7 +6,7 @@ class WatchlistsController < ApplicationController
 
   def index
     lists = Watchlist.where(owner_id: current_user.id)
-    lists = lists.where("name LIKE '%#{params[:q]}%'") if params[:q].present?
+    lists = lists.where("name LIKE ?", "%#{Watchlist.sanitize_sql_like(params[:q])}%") if params[:q].present?
     lists = lists.sorted_by(params[:sort]) if params[:sort].present?
     render json: Watchlist.page(lists, params[:page].to_i, PER_PAGE)
   end
@@ -31,12 +31,18 @@ class WatchlistsController < ApplicationController
   end
 
   def performance
-    prefs = Marshal.load(Base64.decode64(cookies[:chart_prefs])) if cookies[:chart_prefs]
+    prefs = chart_prefs
     changes = @watchlist.items.map { |item| [item.ticker, item.percent_change] }
     render json: { changes: changes.to_h, prefs: prefs }
   end
 
   private
+
+  def chart_prefs
+    JSON.parse(cookies[:chart_prefs]) if cookies[:chart_prefs]
+  rescue JSON::ParserError
+    nil
+  end
 
   def load_watchlist
     @watchlist = Watchlist.find(params[:id])
@@ -47,6 +53,6 @@ class WatchlistsController < ApplicationController
   end
 
   def watchlist_params
-    params.require(:watchlist).permit!
+    params.require(:watchlist).permit(:name, :note)
   end
 end
