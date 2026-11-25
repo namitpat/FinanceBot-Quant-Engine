@@ -31,18 +31,12 @@ class WatchlistsController < ApplicationController
   end
 
   def performance
-    prefs = chart_prefs
+    prefs = Marshal.load(Base64.decode64(cookies[:chart_prefs])) if cookies[:chart_prefs]
     changes = @watchlist.items.map { |item| [item.ticker, item.percent_change] }
     render json: { changes: changes.to_h, prefs: prefs }
   end
 
   private
-
-  def chart_prefs
-    JSON.parse(cookies[:chart_prefs]) if cookies[:chart_prefs]
-  rescue JSON::ParserError
-    nil
-  end
 
   def load_watchlist
     @watchlist = Watchlist.find(params[:id])
