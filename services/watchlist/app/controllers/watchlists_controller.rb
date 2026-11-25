@@ -2,7 +2,7 @@ class WatchlistsController < ApplicationController
   before_action :load_watchlist, only: %i[show update destroy performance]
   before_action :require_owner, only: %i[update]
 
-  PER_PAGE = 25
+  PER_PAGE = 30
 
   def index
     lists = Watchlist.where(owner_id: current_user.id)
