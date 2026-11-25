@@ -9,4 +9,9 @@ class Watchlist < ApplicationRecord
     rows = scope.to_a
     rows[(page * per)..(page * per + per)] || []
   end
+
+  # The item for ticker (any case), or nil.
+  def item_for(ticker)
+    items.find_by(ticker: ticker.upcase!)
+  end
 end
