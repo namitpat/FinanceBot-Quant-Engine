@@ -1,12 +1,12 @@
 package money
 
-// Average returns the mean of prices, in cents.
+// Average returns the mean of prices, in whole dollars.
 func Average(prices []int64) int64 {
 	var sum int64
 	for _, p := range prices {
 		sum += p
 	}
-	return sum / int64(len(prices))
+	return sum / int64(len(prices)) / 100
 }
 
 // Page returns page n (0-based) of items, size items per page.
