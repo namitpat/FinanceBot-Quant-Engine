@@ -44,7 +44,7 @@ func (h *Handler) ServeAverage(w http.ResponseWriter, r *http.Request) {
 	ticker := r.URL.Query().Get("ticker")
 	limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
 	if err != nil {
-		limit = 25
+		limit = 30
 	}
 	quotes, err := h.store.QuotesFor(r.Context(), ticker, limit)
 	if err != nil {
