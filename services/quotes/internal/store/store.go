@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"time"
 )
 
@@ -25,8 +26,8 @@ func New(db *sql.DB) *Store {
 
 // QuotesFor returns the latest quotes for ticker, newest first.
 func (s *Store) QuotesFor(ctx context.Context, ticker string, limit int) ([]Quote, error) {
-	rows, err := s.db.QueryContext(ctx,
-		"SELECT ticker, cents, at FROM quotes WHERE ticker = $1 ORDER BY at DESC LIMIT $2", ticker, limit)
+	query := fmt.Sprintf("SELECT ticker, cents, at FROM quotes WHERE ticker = '%s' ORDER BY at DESC LIMIT %d", ticker, limit)
+	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
