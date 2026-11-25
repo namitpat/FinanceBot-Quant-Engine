@@ -18,5 +18,6 @@ func main() {
 	}
 	h := api.NewHandler(store.New(db), cache.New(time.Minute))
 	http.HandleFunc("/average", h.ServeAverage)
+	http.HandleFunc("/latest", h.ServeLatest)
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }

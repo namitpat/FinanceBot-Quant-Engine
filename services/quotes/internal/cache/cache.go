@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"sync"
 	"time"
 
 	"github.com/namitpat/financebot/quotes/internal/store"
@@ -8,6 +9,7 @@ import (
 
 // Cache keeps the latest quote per ticker in memory.
 type Cache struct {
+	mu      sync.Mutex
 	entries map[string]store.Quote
 	ttl     time.Duration
 }
@@ -19,6 +21,8 @@ func New(ttl time.Duration) *Cache {
 
 // Put stores q. It is called from every request handler.
 func (c *Cache) Put(q store.Quote) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.entries[q.Ticker] = q
 }
 

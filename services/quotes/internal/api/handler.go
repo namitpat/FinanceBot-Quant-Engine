@@ -1,12 +1,13 @@
 package api
 
 import (
-	"crypto/tls"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/namitpat/financebot/quotes/internal/cache"
 	"github.com/namitpat/financebot/quotes/internal/money"
@@ -23,18 +24,19 @@ type Handler struct {
 // NewHandler wires a handler to its store, cache and upstream feed client.
 func NewHandler(s *store.Store, c *cache.Cache) *Handler {
 	return &Handler{
-		store: s,
-		cache: c,
-		upstream: &http.Client{
-			Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
-		},
+		store:    s,
+		cache:    c,
+		upstream: &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
 // NewAPIKey issues a key for a new API client.
-func NewAPIKey() string {
-	apiKey := fmt.Sprintf("fb_%016x", rand.Int63())
-	return apiKey
+func NewAPIKey() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return "fb_" + hex.EncodeToString(b), nil
 }
 
 // ServeAverage writes the average price for ?ticker=.
@@ -55,6 +57,15 @@ func (h *Handler) ServeAverage(w http.ResponseWriter, r *http.Request) {
 		prices = append(prices, q.Cents)
 	}
 	json.NewEncoder(w).Encode(map[string]int64{"average": money.Average(prices)})
+}
+
+// ServeLatest writes the latest cached price for ?ticker=, in dollars.
+func (h *Handler) ServeLatest(w http.ResponseWriter, r *http.Request) {
+	q, ok := h.cache.Get(r.URL.Query().Get("ticker"))
+	if !ok {
+		http.Error(w, "no recent quote", http.StatusNotFound)
+	}
+	json.NewEncoder(w).Encode(map[string]string{"ticker": q.Ticker, "price": money.Dollars(q.Cents)})
 }
 
 // Refresh checks that every upstream feed URL answers.
