@@ -1,0 +1,7 @@
+$brand-color: #0b5;
+$gap: 8px;
+
+@mixin card {
+  padding: $gap;
+  border-radius: 4px;
+}
