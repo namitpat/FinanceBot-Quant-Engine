@@ -40,3 +40,5 @@ long tick_vwap_cents(const struct tick *ticks, size_t count) {
     }
     return notional / volume;
 }
+
+/* e2e follow-up touch 2026-11-27 */
